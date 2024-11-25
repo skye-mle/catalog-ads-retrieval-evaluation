@@ -8,7 +8,7 @@ Input:
 
 [Step 1: Analyze Query Intent]
 1. Identify if the query is:
-- Brand-focused (e.g., 나이키, 애플)
+- Brand-focused (e.g., 나이키, 애플, 세이코)
 - Product-focused (e.g., 냉장고, 운동화)
 - Mixed (e.g., 나이키운동화)
 

@@ -15,9 +15,6 @@ class SearchConfig:
     # Paths
     PROMPT_TEMPLATE_PATH: str = "prompts/v1.txt"
 
-    # Search settings
-    MAX_RESULTS: int = 100
-
     # Feature platform settings
     FEATURE_PLATFORM_ENDPOINT: str = "feature-platform-grpc.kr.krmt.io:80"
     FEATURE_PLATFORM_SERVICE: str = (
@@ -26,5 +23,5 @@ class SearchConfig:
     FEATURE_PLATFORM_METHOD: str = "GetSearchKeywordViewEntity"
 
     # LLM settings
-    NUM_LLM_REQUESTS: int = 64
+    NUM_LLM_REQUESTS: int = 100
     NUM_WORKERS: int = 16
