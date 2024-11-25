@@ -1,0 +1,122 @@
+Objective: Evaluate if a product ad is relevant to the search term with a score of 0 or 1. ONLY PRINT THE JSON OUTPUT.
+
+Input:
+- Query: {{query}}
+- Query Predicted Category: {{query_category}}
+- Ad Title: {{title}}
+- Ad Category: {{category}}
+
+[Step 1: Analyze Query Intent]
+1. Identify if the query is:
+- Brand-focused (e.g., 나이키, 애플)
+- Product-focused (e.g., 냉장고, 운동화)
+- Mixed (e.g., 나이키운동화)
+
+2. For brand-focused queries:
+- Consider the brand's main product categories
+- Example: "나이키" → 운동화, 운동복, 스포츠용품, ...
+- Example: "루이비통" → 가방, 지갑, 패션잡화, ...
+
+[Step 2: Determine Product Category Match]
+1. For product-focused queries:
+- Direct match required between query and ad category
+- Example: "냉장고" query must match with 냉장고 products
+- Peripheral products are not considered matches
+- Example: "냉장고" query does not match with 냉장고커버, 냉장고필름, 냉장고부품, etc.
+
+2. For brand-focused queries:
+- Ad must be from the brand's main product categories
+- Example: "루이비통" query matches with 가방, 지갑, but not with 케이스, 액세서리
+
+3. For mixed queries (e.g., 나이키운동화, 삼성냉장고):
+- Focus on product category match
+- Brand match is secondary
+- Example: For "나이키운동화", any 운동화 category gets score 1
+- Example: For "삼성냉장고", any 냉장고 category gets score 1
+
+- For all queries, refer to the Ad Category to determine the product category of the ad if it is given.
+
+[Step 3: Score Assignment]
+Score 1 if:
+- Product-focused query: Direct category match
+- Brand-focused query: Product is from brand's main categories
+- Mixed query: Product category matches (regardless of brand)
+
+Score 0 if:
+- Category mismatch
+- Brand's non-main product categories (for brand-focused queries)
+
+[Step 4: Output Format]
+Your output must be a JSON object with the following fields without any additional text:
+{
+  "Query": "{query}",
+  "Core_intent": "{query intent - brand/product/mixed}",
+  "Ads_core_intent": "{ad's main product category}",
+  "Score": "{0 or 1}"
+}
+
+Examples:
+[Example 1]
+Query: 냉장고
+Query Predicted Category: 생활가전
+Ad: [삼성] 비스포크 4도어 냉장고 875L
+Category: 가전/디지털 > 냉장고
+Output:
+{
+  "Query": "냉장고",
+  "Core_intent": "냉장고",
+  "Ads_core_intent": "냉장고",
+  "Score": "1"
+}
+
+[Example 2]
+Query: 냉장고
+Query Predicted Category: 생활가전
+Ad: 삼성 냉장고 T9000 RF66M91C2XS 무광 외부보호필름 세트
+Category: Not given
+Output:
+{
+  "Query": "냉장고",
+  "Core_intent": "냉장고",
+  "Ads_core_intent": "냉장고 보호필름",
+  "Score": "0"
+}
+
+[Example 3]
+Query: 아이폰
+Query Predicted Category: 디지털기기
+Ad: 아이폰 케이스
+Category: 휴대폰 > 케이스
+Output:
+{
+  "Query": "아이폰",
+  "Core_intent": "휴대폰",
+  "Ads_core_intent": "휴대폰 케이스",
+  "Score": "0"
+}
+
+[Example 3]
+Query: 나이키운동화
+Query Predicted Category: 신발/운동화
+Ad: 아디다스 운동화 울트라부스트
+Category: 스포츠 > 운동화
+Output:
+{
+  "Query": "나이키운동화",
+  "Core_intent": "운동화",
+  "Ads_core_intent": "운동화",
+  "Score": "1"
+}
+
+[Example 4]
+Query: 루이비통
+Query Predicted Category: 여성의류, 여성잡화, 남성패션/잡화
+Ad: 루이비통 가방
+Category: 패션잡화 > 가방
+Output:
+{
+  "Query": "루이비통",
+  "Core_intent": ["여성의류", "여성잡화", "남성패션/잡화"],
+  "Ads_core_intent": "가방",
+  "Score": "1"
+}
