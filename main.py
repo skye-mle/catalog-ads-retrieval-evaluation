@@ -10,11 +10,11 @@ from evaluator.metrics import calculate_metrics
 from search.client import SearchClient
 from utils.data_processor import process_search_results
 import pandas as pd
+import time
+from utils.logging_config import setup_logging
 
-
-logging.basicConfig(level=logging.INFO)
+# Define logger at module level
 logger = logging.getLogger(__name__)
-
 
 def create_results_dir() -> str:
     """Create results directory with timestamp"""
@@ -91,6 +91,8 @@ def run_evaluation(
 
             results.append(llm_results)
 
+            time.sleep(1)
+
         df_all = pd.concat(results, ignore_index=True)
         df_all = df_all[
             [
@@ -151,6 +153,7 @@ def main():
     keywords_df = load_keywords(args.keywords_file)
     result_dir = create_results_dir()
 
+    setup_logging(logs_dir=result_dir)
     logger.info(f"Results will be saved to: {result_dir}")
     keywords_df.to_csv(os.path.join(result_dir, "input_keywords.csv"), index=False)
 

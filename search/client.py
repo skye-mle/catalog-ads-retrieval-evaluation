@@ -81,6 +81,8 @@ class SearchClient:
                     if info["is_boost"] == 1
                 ]
                 return {"category_list": category_list}
+            else:
+                return {"category_list": []}
         return {}
 
     def search(self, keyword: str, dsl_name: str) -> Dict[str, Any]:

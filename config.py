@@ -23,5 +23,5 @@ class SearchConfig:
     FEATURE_PLATFORM_METHOD: str = "GetSearchKeywordViewEntity"
 
     # LLM settings
-    NUM_LLM_REQUESTS: int = 100
-    NUM_WORKERS: int = 16
+    NUM_LLM_REQUESTS: int = 64
+    NUM_WORKERS: int = 4
