@@ -16,6 +16,7 @@ from utils.logging_config import setup_logging
 # Define logger at module level
 logger = logging.getLogger(__name__)
 
+
 def create_results_dir() -> str:
     """Create results directory with timestamp"""
     base_dir = "results"

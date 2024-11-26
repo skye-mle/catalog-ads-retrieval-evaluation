@@ -3,6 +3,7 @@ import json
 import re
 from typing import Dict, Any, Optional
 import logging
+import ast
 from grpc_requests import Client
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,31 @@ class SearchClient:
                 return {"category_list": category_list}
             else:
                 return {"category_list": []}
-        return {}
+        elif dsl_name.startswith("llm_category_match"):
+            category_weights = self.get_keyword_category_weights(keyword, depth=3)
+            if category_weights:
+                category_1_weights = {
+                    weight["category_id"]: weight["score"] 
+                    for weight in ast.literal_eval(category_weights["category_1_weights"])}
+                category_2_weights = {
+                    weight["category_id"]: weight["score"]
+                    for weight in ast.literal_eval(category_weights["category_2_weights"])
+                }
+                category_3_weights = {
+                    weight["category_id"]: weight["score"]
+                    for weight in ast.literal_eval(category_weights["category_3_weights"])
+                }
+                return {
+                    "category_1_weights": category_1_weights,
+                    "category_2_weights": category_2_weights,
+                    "category_3_weights": category_3_weights,
+                }
+            else:
+                return {
+                    "category_1_weights": {},
+                    "category_2_weights": {},
+                    "category_3_weights": {},
+                }
 
     def search(self, keyword: str, dsl_name: str) -> Dict[str, Any]:
         """Execute search with specified DSL"""
@@ -114,7 +139,39 @@ class SearchClient:
         # Import DSL module dynamically to avoid circular imports
         import dsls
 
-        dsl_func = getattr(dsls, f"get_{dsl_name}_dsl")
-        if params:
-            return dsl_func(keyword, **params)
-        return dsl_func(keyword)
+        if dsl_name.startswith("llm_category_match"):
+            if not params["category_1_weights"] or not params["category_2_weights"] or not params["category_3_weights"]:
+                return dsls.get_keyword_match_dsl(keyword)
+            
+            filter_option, ranking_option = dsl_name.replace("get_llm_category_match_", "").replace("_dsl", "").split("_")
+            if filter_option == "depth1filter":
+                filter_query = dsls.get_filter_query(depth=1, category_weights=params["category_1_weights"])
+            elif filter_option == "depth2filter":
+                filter_query = dsls.get_filter_query(depth=2, category_weights=params["category_2_weights"])
+            elif filter_option == "depth3filter":
+                filter_query = dsls.get_filter_query(depth=3, category_weights=params["category_3_weights"])
+            else:
+                raise ValueError(f"Unsupported filter option: {filter_option}")
+            if ranking_option == "depth1ranking":
+                category_1_weights = {k: v * 100 for k, v in params["category_1_weights"].items()}
+                category_2_weights = {k: v * 10 for k, v in params["category_2_weights"].items()}
+                category_3_weights = {k: v * 1 for k, v in params["category_3_weights"].items()}
+            elif ranking_option == "depth3ranking":
+                category_1_weights = {k: v * 1 for k, v in params["category_1_weights"].items()}
+                category_2_weights = {k: v * 10 for k, v in params["category_2_weights"].items()}
+                category_3_weights = {k: v * 100 for k, v in params["category_3_weights"].items()}
+            elif ranking_option == "equalranking":
+                category_1_weights = params["category_1_weights"]
+                category_2_weights = params["category_2_weights"]
+                category_3_weights = params["category_3_weights"]
+            else:
+                raise ValueError(f"Unsupported ranking option: {ranking_option}")
+            ranking_query = dsls.get_ranking_query(
+                category_1_weights, category_2_weights, category_3_weights
+            )
+            return dsls.get_llm_category_match_dsl(keyword, filter_query, ranking_query)
+        else:
+            dsl_func = getattr(dsls, f"get_{dsl_name}_dsl")
+            if params:
+                return dsl_func(keyword, **params)
+            return dsl_func(keyword)
