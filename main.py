@@ -105,6 +105,9 @@ def run_evaluation(
                 "score",
                 "num_results",
                 "query_count",
+                "depth1_category",
+                "depth2_category",
+                "depth3_category",
             ]
         ]
         metrics = calculate_metrics(df_all)
@@ -143,7 +146,7 @@ def parse_args():
         "--dsl-ranking",
         type=str,
         required=True,
-        choices=["llm_depth1_prior", "llm_depth3_prior", "llm_equal_prior"],
+        choices=["fasttext_prior", "llm_depth1_prior", "llm_depth3_prior", "llm_equal_prior"],
         help="Ranking DSLs by category depth",
     )
     parser.add_argument(

@@ -155,6 +155,10 @@ class SearchClient:
                 "catalog_id",
                 "title",
                 "category_name_0",
+                "fast_text_category_name",
+                "llm_category_depth_1_id",
+                "llm_category_depth_2_id",
+                "llm_category_depth_3_id",
             ]
         }
         return dsl
@@ -191,20 +195,22 @@ def get_filter_dsl(keyword: str, dsl_filter: str, params: Dict[str, Any]) -> Dic
                         "bool": {
                         "should": [
                             {
-                                "terms": {f"llm_category_depth_{target_depth}_id": list(params[f"category_{target_depth}_weights"].keys())},
+                                "terms": {f"llm_category_depth_{target_depth}_id": [int(k) for k in params[f"category_{target_depth}_weights"].keys()]},
                             },
                             {
+                                "bool": {
                                 "filter": [
-                                    {"bool": {"must_not": {"exists": {"field": f"llm_category_depth_{target_depth}_id"}}}},
-                                    {
-                                        "bool": {
-                                            "should": [
-                                                {"terms": {"fast_text_category_name": params["fasttext_category_list"]}},
-                                                {"bool": {"must_not": {"exists": {"field": "fast_text_category_name"}}}},
-                                            ]
-                                        }
-                                    },                                
-                                ]                            
+                                        {"bool": {"must_not": {"exists": {"field": f"llm_category_depth_{target_depth}_id"}}}},
+                                        {
+                                            "bool": {
+                                                "should": [
+                                                    {"terms": {"fast_text_category_name": params["fasttext_category_list"]}},
+                                                    {"bool": {"must_not": {"exists": {"field": "fast_text_category_name"}}}},
+                                                ]
+                                            }
+                                        },                                
+                                    ]                            
+                                }
                             }
                         ]
                     }                
@@ -222,7 +228,7 @@ def get_filter_dsl(keyword: str, dsl_filter: str, params: Dict[str, Any]) -> Dic
             filter_dsl.append({
                 "bool": {
                     "should": [
-                        {"terms": {f"llm_category_depth_{target_depth}_id": list(params[f"category_{target_depth}_weights"].keys())}},
+                        {"terms": {f"llm_category_depth_{target_depth}_id": [int(k) for k in params[f"category_{target_depth}_weights"].keys()]}},
                         {"bool": {"must_not": {"exists": {"field": f"llm_category_depth_{target_depth}_id"}}}},
                     ]
                 }
@@ -241,7 +247,10 @@ def get_ranking_dsl(keyword: str, dsl_ranking: str, params: Dict[str, Any]) -> D
                 },
             }
         )
-    if ranking_dsl == "llm_depth1_prior":
+    if dsl_ranking == "fasttext_prior":
+        return ranking_dsl
+
+    if dsl_ranking == "llm_depth1_prior":
         category_1_weights = {k: v * 1000 for k, v in params["category_1_weights"].items()}
         category_2_weights = {k: v * 100 for k, v in params["category_2_weights"].items()}
         category_3_weights = {k: v * 10 for k, v in params["category_3_weights"].items()}
