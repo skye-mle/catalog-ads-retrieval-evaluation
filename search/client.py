@@ -85,26 +85,38 @@ class SearchClient:
             else:
                 return {"category_list": []}
         elif dsl_name.startswith("llm_category_match"):
-            category_weights = self.get_keyword_category_weights(keyword, depth=3)
-            if category_weights:
+            fasttext_category_weights = self.get_keyword_category_weights(keyword, depth=1)
+            if fasttext_category_weights:
+                fasttext_category_list = [
+                    info["hoian_category_name"]
+                    for info in json.loads(fasttext_category_weights["fasttextCategoryWeights"])
+                    if info["is_boost"] == 1
+                ]
+            else:
+                fasttext_category_list = []
+                
+            llm_category_weights = self.get_keyword_category_weights(keyword, depth=3)
+            if llm_category_weights:
                 category_1_weights = {
                     weight["category_id"]: weight["score"] 
-                    for weight in ast.literal_eval(category_weights["category_1_weights"])}
+                    for weight in ast.literal_eval(llm_category_weights["category_1_weights"])}
                 category_2_weights = {
                     weight["category_id"]: weight["score"]
-                    for weight in ast.literal_eval(category_weights["category_2_weights"])
+                    for weight in ast.literal_eval(llm_category_weights["category_2_weights"])
                 }
                 category_3_weights = {
                     weight["category_id"]: weight["score"]
-                    for weight in ast.literal_eval(category_weights["category_3_weights"])
+                    for weight in ast.literal_eval(llm_category_weights["category_3_weights"])
                 }
                 return {
+                    "fasttext_category_list": fasttext_category_list,
                     "category_1_weights": category_1_weights,
                     "category_2_weights": category_2_weights,
                     "category_3_weights": category_3_weights,
                 }
             else:
                 return {
+                    "fasttext_category_list": fasttext_category_list,
                     "category_1_weights": {},
                     "category_2_weights": {},
                     "category_3_weights": {},
@@ -169,7 +181,7 @@ class SearchClient:
             ranking_query = dsls.get_ranking_query(
                 category_1_weights, category_2_weights, category_3_weights
             )
-            return dsls.get_llm_category_match_dsl(keyword, filter_query, ranking_query)
+            return dsls.get_llm_category_match_dsl(keyword, params["fasttext_category_list"], filter_query, ranking_query)
         else:
             dsl_func = getattr(dsls, f"get_{dsl_name}_dsl")
             if params:

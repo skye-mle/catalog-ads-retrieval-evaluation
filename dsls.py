@@ -110,26 +110,30 @@ def get_fasttext_category_match_dsl(
 
 def get_llm_category_match_dsl(
     keyword: str,
+    fasttext_category_list: List[str],
     filter_query: Dict[str, Any],
     ranking_query: Dict[str, Any],
 ) -> Dict[str, Any]:
-    return {
-        "query": {
-            "function_score": {
-                "score_mode": "sum",
-                "boost_mode": "replace",
-                "query": {
-                    "bool": {
-                        "filter": [
-                            {"match": {"title": {"query": keyword, "operator": "and"}}},
-                            filter_query,
-                        ]
-                    }
-                },
-                "functions": [ranking_query],
+    if fasttext_category_list:
+        return {
+            "query": {
+                "function_score": {
+                    "score_mode": "sum",
+                    "boost_mode": "replace",
+                    "query": {
+                        "bool": {
+                            "filter": [
+                                {"match": {"title": {"query": keyword, "operator": "and"}}},
+                                filter_query,
+                            ]
+                        }
+                    },
+                    "functions": [ranking_query],
+                }
             }
         }
-    }
+    else:
+        return get_keyword_match_dsl(keyword)
 
 
 def get_filter_query(depth, category_weights):
