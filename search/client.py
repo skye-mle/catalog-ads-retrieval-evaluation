@@ -71,65 +71,53 @@ class SearchClient:
             logger.error(f"Error getting category weights: {str(e)}")
             return None
 
-    def get_dsl_params(self, keyword: str, dsl_name: str) -> Dict[str, Any]:
+    def get_dsl_params(self, keyword: str) -> Dict[str, Any]:
         """Get parameters for DSL based on DSL name"""
-        if dsl_name == "fasttext_category_match":
-            category_weights = self.get_keyword_category_weights(keyword, depth=1)
-            if category_weights:
-                category_list = [
-                    info["hoian_category_name"]
-                    for info in json.loads(category_weights["category_weights"])
-                    if info["is_boost"] == 1
-                ]
-                return {"category_list": category_list}
-            else:
-                return {"category_list": []}
-        elif dsl_name.startswith("llm_category_match"):
-            fasttext_category_weights = self.get_keyword_category_weights(keyword, depth=1)
-            if fasttext_category_weights:
-                fasttext_category_list = [
-                    info["hoian_category_name"]
-                    for info in json.loads(fasttext_category_weights["fasttextCategoryWeights"])
-                    if info["is_boost"] == 1
-                ]
-            else:
-                fasttext_category_list = []
-                
-            llm_category_weights = self.get_keyword_category_weights(keyword, depth=3)
-            if llm_category_weights:
-                category_1_weights = {
-                    weight["category_id"]: weight["score"] 
-                    for weight in ast.literal_eval(llm_category_weights["category_1_weights"])}
-                category_2_weights = {
-                    weight["category_id"]: weight["score"]
-                    for weight in ast.literal_eval(llm_category_weights["category_2_weights"])
-                }
-                category_3_weights = {
-                    weight["category_id"]: weight["score"]
-                    for weight in ast.literal_eval(llm_category_weights["category_3_weights"])
-                }
-                return {
-                    "fasttext_category_list": fasttext_category_list,
-                    "category_1_weights": category_1_weights,
-                    "category_2_weights": category_2_weights,
-                    "category_3_weights": category_3_weights,
-                }
-            else:
-                return {
-                    "fasttext_category_list": fasttext_category_list,
-                    "category_1_weights": {},
-                    "category_2_weights": {},
-                    "category_3_weights": {},
-                }
+        fasttext_category_weights = self.get_keyword_category_weights(keyword, depth=1)
+        if fasttext_category_weights:
+            fasttext_category_list = [
+                info["hoian_category_name"]
+                for info in json.loads(fasttext_category_weights["category_weights"])
+                if info["is_boost"] == 1
+            ]
+        else:
+            fasttext_category_list = []
+            
+        llm_category_weights = self.get_keyword_category_weights(keyword, depth=3)
+        if llm_category_weights:
+            category_1_weights = {
+                weight["category_id"]: weight["score"] 
+                for weight in ast.literal_eval(llm_category_weights["category_1_weights"])}
+            category_2_weights = {
+                weight["category_id"]: weight["score"]
+                for weight in ast.literal_eval(llm_category_weights["category_2_weights"])
+            }
+            category_3_weights = {
+                weight["category_id"]: weight["score"]
+                for weight in ast.literal_eval(llm_category_weights["category_3_weights"])
+            }
+            return {
+                "fasttext_category_list": fasttext_category_list,
+                "category_1_weights": category_1_weights,
+                "category_2_weights": category_2_weights,
+                "category_3_weights": category_3_weights,
+            }
+        else:
+            return {
+                "fasttext_category_list": fasttext_category_list,
+                "category_1_weights": {},
+                "category_2_weights": {},
+                "category_3_weights": {},
+            }
 
-    def search(self, keyword: str, dsl_name: str) -> Dict[str, Any]:
+    def search(self, keyword: str, dsl_filter: str, dsl_ranking: str) -> Dict[str, Any]:
         """Execute search with specified DSL"""
         try:
             # Get DSL parameters
-            dsl_params = self.get_dsl_params(keyword, dsl_name)
+            dsl_params = self.get_dsl_params(keyword)
 
             # Get DSL for the keyword
-            dsl = self._get_dsl(keyword, dsl_name, dsl_params)
+            dsl = self._get_dsl(keyword, dsl_filter, dsl_ranking, dsl_params)
 
             # Execute search
             url = f"{self.es_url}/{self.es_index}/_search"
@@ -145,45 +133,160 @@ class SearchClient:
             raise
 
     def _get_dsl(
-        self, keyword: str, dsl_name: str, params: Dict[str, Any]
+        self, keyword: str, dsl_filter: str, dsl_ranking: str, params: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Get DSL query based on name and keyword"""
-        # Import DSL module dynamically to avoid circular imports
-        import dsls
+        filter_dsl = get_filter_dsl(keyword, dsl_filter, params)
+        ranking_dsl = get_ranking_dsl(keyword, dsl_ranking, params)
+        dsl = {
+            "size": 1000,
+            "query": {
+                "function_score": {
+                    "boost_mode": "replace",
+                    "query": {
+                        "bool": { "filter": filter_dsl }
+                    },
+                    "functions": ranking_dsl,
+                    "score_mode": "sum",
+                }
+            },
+            "_source": [
+                "original_id",
+                "product_id",
+                "catalog_id",
+                "title",
+                "category_name_0",
+            ]
+        }
+        return dsl
 
-        if dsl_name.startswith("llm_category_match"):
-            if not params["category_1_weights"] or not params["category_2_weights"] or not params["category_3_weights"]:
-                return dsls.get_keyword_match_dsl(keyword)
-            
-            filter_option, ranking_option = dsl_name.replace("get_llm_category_match_", "").replace("_dsl", "").split("_")
-            if filter_option == "depth1filter":
-                filter_query = dsls.get_filter_query(depth=1, category_weights=params["category_1_weights"])
-            elif filter_option == "depth2filter":
-                filter_query = dsls.get_filter_query(depth=2, category_weights=params["category_2_weights"])
-            elif filter_option == "depth3filter":
-                filter_query = dsls.get_filter_query(depth=3, category_weights=params["category_3_weights"])
+
+def get_filter_dsl(keyword: str, dsl_filter: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    filter_dsl = [
+        {"exists": {"field": "catalog_product_set_ids"}},
+        {"term": {"is_live": {"value": True}}},
+        {"term": {"availability": {"value": "IN_STOCK"}}},
+        {
+            "match": {
+                "serving_title": {
+                    "query": keyword,
+                    "operator": "and",
+                }
+            }
+        }        
+    ]
+    if dsl_filter == "fasttext_category_match" and params["fasttext_category_list"]:
+        filter_dsl.append({
+            "bool": {
+                "should": [
+                    {"terms": {"fast_text_category_name": params["fasttext_category_list"]}},
+                    {"bool": {"must_not": {"exists": {"field": "fast_text_category_name"}}}},
+                ]
+            }
+        })
+    elif dsl_filter.startswith("llm_depth"):
+        target_depth = dsl_filter.split("_")[1].replace("depth", "")
+        if params["fasttext_category_list"]:
+            if params[f"category_{target_depth}_weights"]:
+                filter_dsl.append({
+                        "bool": {
+                        "should": [
+                            {
+                                "terms": {f"llm_category_depth_{target_depth}_id": list(params[f"category_{target_depth}_weights"].keys())},
+                            },
+                            {
+                                "filter": [
+                                    {"bool": {"must_not": {"exists": {"field": f"llm_category_depth_{target_depth}_id"}}}},
+                                    {
+                                        "bool": {
+                                            "should": [
+                                                {"terms": {"fast_text_category_name": params["fasttext_category_list"]}},
+                                                {"bool": {"must_not": {"exists": {"field": "fast_text_category_name"}}}},
+                                            ]
+                                        }
+                                    },                                
+                                ]                            
+                            }
+                        ]
+                    }                
+                })
             else:
-                raise ValueError(f"Unsupported filter option: {filter_option}")
-            if ranking_option == "depth1ranking":
-                category_1_weights = {k: v * 100 for k, v in params["category_1_weights"].items()}
-                category_2_weights = {k: v * 10 for k, v in params["category_2_weights"].items()}
-                category_3_weights = {k: v * 1 for k, v in params["category_3_weights"].items()}
-            elif ranking_option == "depth3ranking":
-                category_1_weights = {k: v * 1 for k, v in params["category_1_weights"].items()}
-                category_2_weights = {k: v * 10 for k, v in params["category_2_weights"].items()}
-                category_3_weights = {k: v * 100 for k, v in params["category_3_weights"].items()}
-            elif ranking_option == "equalranking":
-                category_1_weights = params["category_1_weights"]
-                category_2_weights = params["category_2_weights"]
-                category_3_weights = params["category_3_weights"]
-            else:
-                raise ValueError(f"Unsupported ranking option: {ranking_option}")
-            ranking_query = dsls.get_ranking_query(
-                category_1_weights, category_2_weights, category_3_weights
-            )
-            return dsls.get_llm_category_match_dsl(keyword, params["fasttext_category_list"], filter_query, ranking_query)
-        else:
-            dsl_func = getattr(dsls, f"get_{dsl_name}_dsl")
-            if params:
-                return dsl_func(keyword, **params)
-            return dsl_func(keyword)
+                filter_dsl.append({
+                    "bool": {
+                        "should": [
+                            {"terms": {"fast_text_category_name": params["fasttext_category_list"]}},
+                            {"bool": {"must_not": {"exists": {"field": "fast_text_category_name"}}}},
+                        ]
+                    }
+                })
+        elif params[f"category_{target_depth}_weights"]:
+            filter_dsl.append({
+                "bool": {
+                    "should": [
+                        {"terms": {f"llm_category_depth_{target_depth}_id": list(params[f"category_{target_depth}_weights"].keys())}},
+                        {"bool": {"must_not": {"exists": {"field": f"llm_category_depth_{target_depth}_id"}}}},
+                    ]
+                }
+            })
+    return filter_dsl
+
+
+def get_ranking_dsl(keyword: str, dsl_ranking: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    ranking_dsl = [{"weight": 1, "random_score": {}}]
+    if params["fasttext_category_list"]:
+        ranking_dsl.append(
+            {
+                "weight": 1,
+                "filter": {
+                    "terms": {"fast_text_category_name": params["fasttext_category_list"]}
+                },
+            }
+        )
+    if ranking_dsl == "llm_depth1_prior":
+        category_1_weights = {k: v * 1000 for k, v in params["category_1_weights"].items()}
+        category_2_weights = {k: v * 100 for k, v in params["category_2_weights"].items()}
+        category_3_weights = {k: v * 10 for k, v in params["category_3_weights"].items()}
+    elif dsl_ranking == "llm_depth3_prior":
+        category_1_weights = {k: v * 10 for k, v in params["category_1_weights"].items()}
+        category_2_weights = {k: v * 100 for k, v in params["category_2_weights"].items()}
+        category_3_weights = {k: v * 1000 for k, v in params["category_3_weights"].items()}
+    elif dsl_ranking == "llm_equal_prior":
+        category_1_weights = {k: v * 10 for k, v in params["category_1_weights"].items()}
+        category_2_weights = {k: v * 10 for k, v in params["category_2_weights"].items()}
+        category_3_weights = {k: v * 10 for k, v in params["category_3_weights"].items()}
+    ranking_dsl.append(
+        {
+            "script_score": {
+                "script": {
+                    "source": """
+                        def category1Weights = params.category1Weights;
+                        def category2Weights = params.category2Weights;
+                        def category3Weights = params.category3Weights;
+                        def totalScore = 0;
+                                        
+                        if (doc['llm_category_depth_1_id'].size() != 0) {
+                            def categoryId1 = doc['llm_category_depth_1_id'].value.toString();
+                            totalScore += (category1Weights.containsKey(categoryId1) ? category1Weights.get(categoryId1) : 0);
+                        }
+
+                        if (doc['llm_category_depth_1_id'].size() != 0) {
+                            def categoryId2 = doc['llm_category_depth_2_id'].value.toString();
+                            totalScore += (category2Weights.containsKey(categoryId2) ? category2Weights.get(categoryId2) : 0);
+                        }
+
+                        if (doc['llm_category_depth_1_id'].size() != 0) {
+                            def categoryId3 = doc['llm_category_depth_3_id'].value.toString();
+                            totalScore += (category3Weights.containsKey(categoryId3) ? category3Weights.get(categoryId3) : 0);
+                        }
+
+                        return totalScore;
+                """,
+                    "params": {
+                        "category1Weights": category_1_weights,
+                        "category2Weights": category_2_weights,
+                        "category3Weights": category_3_weights,
+                    },
+                }
+            }
+        }        
+    )
+    return ranking_dsl

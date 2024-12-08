@@ -17,13 +17,13 @@ from utils.logging_config import setup_logging
 logger = logging.getLogger(__name__)
 
 
-def create_results_dir() -> str:
+def create_results_dir(dsl_filter: str, dsl_ranking: str) -> str:
     """Create results directory with timestamp"""
     base_dir = "results"
     os.makedirs(base_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    result_dir = os.path.join(base_dir, timestamp)
+    result_dir = os.path.join(base_dir, f"{dsl_filter}_{dsl_ranking}_{timestamp}")
     os.makedirs(result_dir)
 
     return result_dir
@@ -47,7 +47,7 @@ def load_keywords(csv_path: str) -> pd.DataFrame:
 
 
 def run_evaluation(
-    keywords_df: pd.DataFrame, dsl_name: str, config: SearchConfig
+    keywords_df: pd.DataFrame, dsl_filter: str, dsl_ranking: str, config: SearchConfig
 ) -> Dict:
     """Run evaluation pipeline for search results"""
     try:
@@ -78,7 +78,7 @@ def run_evaluation(
                 f"Processing keyword: {keyword} (category: {top_category_name}), count: {query_count})"
             )
 
-            search_results = search_client.search(keyword=keyword, dsl_name=dsl_name)
+            search_results = search_client.search(keyword=keyword, dsl_filter=dsl_filter, dsl_ranking=dsl_ranking)
             logger.info(f"Number of search results: {len(search_results)}")
             df_results = process_search_results(
                 keyword=keyword, search_results=search_results
@@ -116,27 +116,35 @@ def run_evaluation(
         raise
 
 
-def save_results(results: Dict, dsl_name: str, result_dir: str):
+def save_results(results: Dict, result_dir: str):
     """Save evaluation results to files"""
     results["detailed_results"].to_csv(
-        os.path.join(result_dir, f"detailed_results_{dsl_name}.csv"), index=False
+        os.path.join(result_dir, "detailed_results.csv"), index=False
     )
     result = results["detailed_results"][["keyword", "title", "label", "score"]]
-    result.to_csv(os.path.join(result_dir, f"results_{dsl_name}.csv"), index=False)
+    result.to_csv(os.path.join(result_dir, "results.csv"), index=False)
 
     metrics_df = pd.DataFrame([results["metrics"]])
     metrics_df.to_json(
-        os.path.join(result_dir, f"metrics_{dsl_name}.json"), orient="records", indent=2
+        os.path.join(result_dir, "metrics.json"), orient="records", indent=2
     )
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate search DSLs")
     parser.add_argument(
-        "--dsls",
+        "--dsl-filter",
         type=str,
         required=True,
-        help="Comma-separated list of DSL names to evaluate",
+        choices=["fasttext_category_match", "llm_depth1_match", "llm_depth2_match", "llm_depth3_match"],
+        help="Filter DSLs by prefix (e.g. llm_category_match)",
+    )
+    parser.add_argument(
+        "--dsl-ranking",
+        type=str,
+        required=True,
+        choices=["llm_depth1_prior", "llm_depth3_prior", "llm_equal_prior"],
+        help="Ranking DSLs by category depth",
     )
     parser.add_argument(
         "--keywords-file",
@@ -150,26 +158,24 @@ def parse_args():
 def main():
     args = parse_args()
 
-    dsl_names = [dsl.strip() for dsl in args.dsls.split(",")]
     keywords_df = load_keywords(args.keywords_file)
-    result_dir = create_results_dir()
+    result_dir = create_results_dir(args.dsl_filter, args.dsl_ranking)
 
     setup_logging(logs_dir=result_dir)
     logger.info(f"Results will be saved to: {result_dir}")
     keywords_df.to_csv(os.path.join(result_dir, "input_keywords.csv"), index=False)
 
     config = SearchConfig()
-    for dsl_name in dsl_names:
-        logger.info(f"\nEvaluating DSL: {dsl_name}")
-        results = run_evaluation(
-            keywords_df=keywords_df, dsl_name=dsl_name, config=config
-        )
+    logger.info(f"\nEvaluating DSL: filter {args.dsl_filter}, ranking {args.dsl_ranking}")
+    results = run_evaluation(
+        keywords_df=keywords_df, dsl_filter=args.dsl_filter, dsl_ranking=args.dsl_ranking, config=config
+    )
 
-        logger.info("\nMetrics:")
-        for metric_name, value in results["metrics"].items():
-            logger.info(f"{metric_name}: {value:.4f}")
+    logger.info("\nMetrics:")
+    for metric_name, value in results["metrics"].items():
+        logger.info(f"{metric_name}: {value:.4f}")
 
-        save_results(results, dsl_name, result_dir)
+    save_results(results, result_dir)
 
 
 if __name__ == "__main__":
