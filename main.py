@@ -69,13 +69,13 @@ def run_evaluation(
         )
 
         results = []
-        for _, row in keywords_df.iterrows():
+        for i, row in keywords_df.iterrows():
             keyword = row["keyword"]
             top_category_name = row["top_category_name"]
             query_count = row["query_count"]
 
             logger.info(
-                f"Processing keyword: {keyword} (category: {top_category_name}), count: {query_count})"
+                f"Processing keyword ({i+1}/{len(keywords_df)}): {keyword} (category: {top_category_name}), count: {query_count})"
             )
 
             search_results = search_client.search(keyword=keyword, dsl_filter=dsl_filter, dsl_ranking=dsl_ranking)
@@ -139,14 +139,14 @@ def parse_args():
         "--dsl-filter",
         type=str,
         required=True,
-        choices=["fasttext_category_match", "llm_depth1_match", "llm_depth2_match", "llm_depth3_match"],
+        choices=["fasttext", "llm_depth1", "llm_depth2", "llm_depth3"],
         help="Filter DSLs by prefix (e.g. llm_category_match)",
     )
     parser.add_argument(
         "--dsl-ranking",
         type=str,
         required=True,
-        choices=["fasttext_prior", "llm_depth1_prior", "llm_depth3_prior", "llm_equal_prior"],
+        choices=["fasttext", "llm_depth123_score123", "llm_depth123_score12", "llm_depth23_score123", "llm_depth23_score12", "llm_depth3_score123", "llm_depth3_score12"],
         help="Ranking DSLs by category depth",
     )
     parser.add_argument(

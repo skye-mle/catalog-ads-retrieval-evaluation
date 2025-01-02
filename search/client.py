@@ -136,7 +136,7 @@ class SearchClient:
         self, keyword: str, dsl_filter: str, dsl_ranking: str, params: Dict[str, Any]
     ) -> Dict[str, Any]:
         filter_dsl = get_filter_dsl(keyword, dsl_filter, params)
-        ranking_dsl = get_ranking_dsl(keyword, dsl_ranking, params)
+        ranking_dsl = get_ranking_dsl(keyword, dsl_filter, dsl_ranking, params)
         dsl = {
             "size": 1000,
             "query": {
@@ -165,10 +165,12 @@ class SearchClient:
 
 
 def get_filter_dsl(keyword: str, dsl_filter: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    # { fasttext, llm_depth1, llm_depth2, llm_depth3 }
     filter_dsl = [
         {"exists": {"field": "catalog_product_set_ids"}},
         {"term": {"is_live": {"value": True}}},
         {"term": {"availability": {"value": "IN_STOCK"}}},
+        {"exists": {"field": "llm_category_depth_1_id"}},
         {
             "match": {
                 "serving_title": {
@@ -178,7 +180,7 @@ def get_filter_dsl(keyword: str, dsl_filter: str, params: Dict[str, Any]) -> Dic
             }
         }        
     ]
-    if dsl_filter == "fasttext_category_match" and params["fasttext_category_list"]:
+    if dsl_filter == "fasttext" and params["fasttext_category_list"]:
         filter_dsl.append({
             "bool": {
                 "should": [
@@ -189,56 +191,17 @@ def get_filter_dsl(keyword: str, dsl_filter: str, params: Dict[str, Any]) -> Dic
         })
     elif dsl_filter.startswith("llm_depth"):
         target_depth = dsl_filter.split("_")[1].replace("depth", "")
-        if params["fasttext_category_list"]:
-            if params[f"category_{target_depth}_weights"]:
-                filter_dsl.append({
-                        "bool": {
-                        "should": [
-                            {
-                                "terms": {f"llm_category_depth_{target_depth}_id": [int(k) for k in params[f"category_{target_depth}_weights"].keys()]},
-                            },
-                            {
-                                "bool": {
-                                "filter": [
-                                        {"bool": {"must_not": {"exists": {"field": f"llm_category_depth_{target_depth}_id"}}}},
-                                        {
-                                            "bool": {
-                                                "should": [
-                                                    {"terms": {"fast_text_category_name": params["fasttext_category_list"]}},
-                                                    {"bool": {"must_not": {"exists": {"field": "fast_text_category_name"}}}},
-                                                ]
-                                            }
-                                        },                                
-                                    ]                            
-                                }
-                            }
-                        ]
-                    }                
-                })
-            else:
-                filter_dsl.append({
-                    "bool": {
-                        "should": [
-                            {"terms": {"fast_text_category_name": params["fasttext_category_list"]}},
-                            {"bool": {"must_not": {"exists": {"field": "fast_text_category_name"}}}},
-                        ]
-                    }
-                })
-        elif params[f"category_{target_depth}_weights"]:
-            filter_dsl.append({
-                "bool": {
-                    "should": [
-                        {"terms": {f"llm_category_depth_{target_depth}_id": [int(k) for k in params[f"category_{target_depth}_weights"].keys()]}},
-                        {"bool": {"must_not": {"exists": {"field": f"llm_category_depth_{target_depth}_id"}}}},
-                    ]
-                }
-            })
+        if params[f"category_{target_depth}_weights"]:
+            filter_dsl.append(
+                {"terms": {f"llm_category_depth_{target_depth}_id": [int(k) for k in params[f"category_{target_depth}_weights"].keys()] + [-1]}}                
+            )
     return filter_dsl
 
 
-def get_ranking_dsl(keyword: str, dsl_ranking: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def get_ranking_dsl(keyword: str, dsl_filter:str, dsl_ranking: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    # { fasttext, llm_depth123_score123, llm_depth123_score12, llm_depth23_score123, llm_depth23_score12, llm_depth3_score123, llm_depth3_score12 }
     ranking_dsl = [{"weight": 1, "random_score": {}}]
-    if params["fasttext_category_list"]:
+    if dsl_ranking == "fasttext":
         ranking_dsl.append(
             {
                 "weight": 1,
@@ -247,55 +210,72 @@ def get_ranking_dsl(keyword: str, dsl_ranking: str, params: Dict[str, Any]) -> D
                 },
             }
         )
-    if dsl_ranking == "fasttext_prior":
         return ranking_dsl
 
-    if dsl_ranking == "llm_depth1_prior":
-        category_1_weights = {k: v * 1000 for k, v in params["category_1_weights"].items()}
-        category_2_weights = {k: v * 100 for k, v in params["category_2_weights"].items()}
-        category_3_weights = {k: v * 10 for k, v in params["category_3_weights"].items()}
-    elif dsl_ranking == "llm_depth3_prior":
-        category_1_weights = {k: v * 10 for k, v in params["category_1_weights"].items()}
-        category_2_weights = {k: v * 100 for k, v in params["category_2_weights"].items()}
-        category_3_weights = {k: v * 1000 for k, v in params["category_3_weights"].items()}
-    elif dsl_ranking == "llm_equal_prior":
-        category_1_weights = {k: v * 10 for k, v in params["category_1_weights"].items()}
-        category_2_weights = {k: v * 10 for k, v in params["category_2_weights"].items()}
-        category_3_weights = {k: v * 10 for k, v in params["category_3_weights"].items()}
-    ranking_dsl.append(
-        {
-            "script_score": {
-                "script": {
-                    "source": """
-                        def category1Weights = params.category1Weights;
-                        def category2Weights = params.category2Weights;
-                        def category3Weights = params.category3Weights;
-                        def totalScore = 0;
-                                        
-                        if (doc['llm_category_depth_1_id'].size() != 0) {
-                            def categoryId1 = doc['llm_category_depth_1_id'].value.toString();
-                            totalScore += (category1Weights.containsKey(categoryId1) ? category1Weights.get(categoryId1) : 0);
-                        }
+    category_1_highly_relevant = [k for k, v in params["category_1_weights"].items() if v == 3]
+    category_2_highly_relevant = [k for k, v in params["category_2_weights"].items() if v == 3]
+    category_3_highly_relevant = [k for k, v in params["category_3_weights"].items() if v == 3]
+    category_1_relevant = [k for k, v in params["category_1_weights"].items() if v == 2]
+    category_2_relevant = [k for k, v in params["category_2_weights"].items() if v == 2]
+    category_3_relevant = [k for k, v in params["category_3_weights"].items() if v == 2]
+    category_2_related = [k for k, v in params["category_2_weights"].items() if v == 1]
+    category_3_related = [k for k, v in params["category_3_weights"].items() if v == 1]
 
-                        if (doc['llm_category_depth_1_id'].size() != 0) {
-                            def categoryId2 = doc['llm_category_depth_2_id'].value.toString();
-                            totalScore += (category2Weights.containsKey(categoryId2) ? category2Weights.get(categoryId2) : 0);
-                        }
-
-                        if (doc['llm_category_depth_1_id'].size() != 0) {
-                            def categoryId3 = doc['llm_category_depth_3_id'].value.toString();
-                            totalScore += (category3Weights.containsKey(categoryId3) ? category3Weights.get(categoryId3) : 0);
-                        }
-
-                        return totalScore;
-                """,
-                    "params": {
-                        "category1Weights": category_1_weights,
-                        "category2Weights": category_2_weights,
-                        "category3Weights": category_3_weights,
-                    },
-                }
-            }
-        }        
-    )
+    if dsl_ranking == "llm_depth123_score123":
+        ranking_dsl.append(get_terms_score(3, "llm_category_depth_1_id", category_1_highly_relevant))
+        ranking_dsl.append(get_terms_score(3, "llm_category_depth_2_id", category_2_highly_relevant))
+        ranking_dsl.append(get_terms_score(3, "llm_category_depth_3_id", category_3_highly_relevant))
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_1_id", category_1_relevant))
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_2_id", category_2_relevant))
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_3_id", category_3_relevant))
+        if dsl_filter == "llm_depth1":
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_2_id", category_2_related))
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_3_id", category_3_related))
+        elif dsl_filter == "llm_depth2":
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_3_id", category_3_related))
+    elif dsl_ranking == "llm_depth123_score12":
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_1_id", category_1_highly_relevant + category_1_relevant))
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_2_id", category_2_highly_relevant + category_2_relevant))
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_3_id", category_3_highly_relevant + category_3_relevant))
+        if dsl_filter == "llm_depth1":
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_2_id", category_2_related))
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_3_id", category_3_related))
+        elif dsl_filter == "llm_depth2":
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_3_id", category_3_related))
+    elif dsl_ranking == "llm_depth23_score123":
+        ranking_dsl.append(get_terms_score(3, "llm_category_depth_2_id", category_2_highly_relevant))
+        ranking_dsl.append(get_terms_score(3, "llm_category_depth_3_id", category_3_highly_relevant))
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_2_id", category_2_relevant))
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_3_id", category_3_relevant))
+        if dsl_filter == "llm_depth1":
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_2_id", category_2_related))
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_3_id", category_3_related))
+        elif dsl_filter == "llm_depth2":
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_3_id", category_3_related))
+    elif dsl_ranking == "llm_depth23_score12":
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_2_id", category_2_highly_relevant + category_2_relevant))
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_3_id", category_3_highly_relevant + category_3_relevant))
+        if dsl_filter == "llm_depth1":
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_2_id", category_2_related))
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_3_id", category_3_related))
+        elif dsl_filter == "llm_depth2":
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_3_id", category_3_related))
+    elif dsl_ranking == "llm_depth3_score123":
+        ranking_dsl.append(get_terms_score(3, "llm_category_depth_3_id", category_3_highly_relevant))
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_3_id", category_3_relevant))
+        if dsl_filter != "llm_depth3":
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_3_id", category_3_related))
+    elif dsl_ranking == "llm_depth3_score12":
+        ranking_dsl.append(get_terms_score(2, "llm_category_depth_3_id", category_3_highly_relevant + category_3_relevant))
+        if dsl_filter != "llm_depth3":
+            ranking_dsl.append(get_terms_score(1, "llm_category_depth_3_id", category_3_related))
     return ranking_dsl
+
+
+def get_terms_score(weight, field_name, category_list):
+    return {
+        "weight": weight,
+        "filter": {
+            "terms": {field_name: category_list}
+        }
+    }
